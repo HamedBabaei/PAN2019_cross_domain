@@ -114,28 +114,6 @@ def buildWordVector(imdb_w2v, text, size):
         vec /= count
     return vec
 
-def extract_charbased_feature(text, ch):
-    count = 0
-    for chars in text:
-        if ch in chars:
-            count += 1
-    return count
-
-def extract_number_feature(text):
-    count = 0
-    for token in pos_tag(TreebankWordTokenizer().tokenize(text)):
-        if token[1] == 'CD':
-            count += 1
-    return count
-
-def extract_negation_feature(text):
-    return len([word for word in TreebankWordTokenizer().tokenize(text)
-                if vader.polarity_scores(word)['compound'] <= -0.5])
-
-def extract_features(text):
-    return [extract_charbased_feature(text , '.'), extract_charbased_feature(text , '?') , 
-            len(punk_sent_tokenizer.tokenize(text)), extract_number_feature(text) , extract_negation_feature(text)]
-
 def identify_authors( input_dir , out_dir , pt , n , ft ):
     max_abs_scaler = preprocessing.MaxAbsScaler()
     Mkdir(out_dir)
@@ -166,19 +144,6 @@ def identify_authors( input_dir , out_dir , pt , n , ft ):
         tfidf_test_set = [tfidf_Preprocessing(text , stopwords_list[problem['language']])
                         for text in test_set]
                 
-        #Our Features extraction and classification
-        print('\t running feature extraction and classification .... ')
-        train = [extract_features(text) for text in train_set]
-        test = [extract_features(text) for text in test_set]
-        scaled_train_data = max_abs_scaler.fit_transform(train)
-        scaled_test_data = max_abs_scaler.transform(test)
-        clf = CalibratedClassifierCV(OneVsRestClassifier(LinearSVC()))
-        clf.fit(scaled_train_data, train_labels)
-        _predictions = clf.predict(scaled_test_data)
-        _proba = clf.predict_proba(scaled_test_data)
-
-        #WORD2VEC feature extraction and classification
-        print('\t running word2vec feature extraction and classification .... ')
         word2vec_train_set = [text.split() for text in tfidf_train_set]
         word2vec_test_set = [text.split() for text in tfidf_test_set]
         n_dim = 300
@@ -194,13 +159,11 @@ def identify_authors( input_dir , out_dir , pt , n , ft ):
         word2vec_test = scale(word2vec_test)
         word2vec_scaled_train_data = max_abs_scaler.fit_transform(word2vec_train)
         word2vec_scaled_test_data = max_abs_scaler.transform(word2vec_test)
-        word2vec_clf = CalibratedClassifierCV(OneVsRestClassifier(LogisticRegression()))
+        word2vec_clf = CalibratedClassifierCV(OneVsRestClassifier(LogisticRegression(C=0.01)))
         word2vec_clf.fit(word2vec_scaled_train_data, train_labels)
         word2vec_predictions = word2vec_clf.predict(word2vec_scaled_test_data)
         word2vec_proba = word2vec_clf.predict_proba(word2vec_scaled_test_data)
         
-        #TFIDF feature extraction and classification
-        print('\t running tf-idf feature extraction and classification .... ')
         tfidf_vocab = tfidf_extract_vocabulary(tfidf_train_set , ft )
         tfidf_vectorizer = TfidfVectorizer(vocabulary=tfidf_vocab, norm=None, strip_accents=False)
         tfidf_train_data = tfidf_vectorizer.fit_transform(tfidf_train_set)
@@ -212,8 +175,6 @@ def identify_authors( input_dir , out_dir , pt , n , ft ):
         tfidf_predictions = tfidf_clf.predict(tfidf_scaled_test_data)
         tfidf_proba = tfidf_clf.predict_proba(tfidf_scaled_test_data)
         
-        #NGRAM feature extraction and classification
-        print('\t running n-gram extraction and classification .... ')
         ngram_vocabulary = ngram_extract_vocabulary(train_set , n , ft)
         ngram_vectorizer = CountVectorizer(strip_accents=False, analyzer='char',ngram_range=(n,n),lowercase=False,vocabulary=ngram_vocabulary)  
         ngram_train_data = ngram_vectorizer.fit_transform(train_set)
@@ -231,11 +192,10 @@ def identify_authors( input_dir , out_dir , pt , n , ft ):
         ngram_predictions = ngram_clf.predict(ngram_scaled_test_data)
         ngram_proba = ngram_clf.predict_proba(ngram_scaled_test_data)
 
-        #Ensemble the results and make predictions
         proba = []
         predictions = []
         for i in range(0,len(test_set)):
-            proba.append((_proba[i] + word2vec_proba[i] + ngram_proba[i] + tfidf_proba[i])/4)
+            proba.append((word2vec_proba[i] + ngram_proba[i] + tfidf_proba[i])/3)
             predictions.append(candidates[np.argmax(proba[i])])
         count = 0
         for i in range(0,len(predictions)):
